@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Payment Options</title>
+<!--
+  "Request money by text" payment page for the Split app.
+  Everything comes from the link, for example:
+    index.html?name=Shane%20Doe&amount=25.00&venmo=shane-doe&cashapp=shaned
+             &paypal=shanedoe&zelle=shane@example.com&applecash=5551234567
+  Only public payment handles are ever in the link. Methods that are missing
+  or don't look valid are hidden.
+-->
+<style>
+  :root {
+    --bg: #f4f4f8;
+    --card: #ffffff;
+    --text: #15151c;
+    --muted: #6b6b7b;
+    --border: #e3e3ea;
+    --accent: #6c5ce7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #000000;
+      --card: #16161d;
+      --text: #ffffff;
+      --muted: #a0a0b0;
+      --border: #2a2a35;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.4;
+  }
+  main {
+    max-width: 440px;
+    margin: 0 auto;
+    padding: 32px 16px 48px;
+  }
+  .summary { text-align: center; margin-bottom: 28px; }
+  .summary p { margin: 0; color: var(--muted); font-size: 16px; }
+  .amount { font-size: 48px; font-weight: 800; margin: 6px 0; letter-spacing: -1px; }
+  .to { font-size: 18px; }
+  .to strong { color: var(--text); }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: var(--muted); margin: 0 0 10px 4px; }
+  .method {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 16px;
+    margin-bottom: 10px;
+    color: var(--text);
+    text-decoration: none;
+    font: inherit;
+    text-align: left;
+  }
+  a.method:active { transform: scale(0.98); }
+  .logo {
+    flex: none;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 800;
+    font-size: 20px;
+  }
+  .details { flex: 1; min-width: 0; }
+  .name { font-weight: 700; font-size: 16px; }
+  .handle { color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+  .action { flex: none; color: var(--accent); font-weight: 700; font-size: 15px; }
+  .copy {
+    flex: none;
+    background: var(--accent);
+    color: #fff;
+    border: 0;
+    border-radius: 20px;
+    padding: 8px 16px;
+    font: inherit;
+    font-weight: 700;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .note { color: var(--muted); font-size: 13px; margin: -4px 4px 14px; }
+  .empty { text-align: center; color: var(--muted); padding: 24px 0; }
+  footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 28px; }
+</style>
+</head>
+<body>
+<main>
+  <section class="summary">
+    <p id="intro">You've been asked to pay</p>
+    <div class="amount" id="amount"></div>
+    <p class="to" id="to"></p>
+  </section>
+
+  <h2 id="methods-title">Pay with</h2>
+  <div id="methods"></div>
+
+  <footer>Payments go directly through each app. This page never sees your payment details.</footer>
+</main>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const get = key => (params.get(key) || '').trim();
+
+  // Name of the person being paid (plain text only, kept short)
+  const name = get('name').slice(0, 60) || 'your friend';
+
+  // Amount: must be a positive number, shown as $25.00
+  const rawAmount = Number(get('amount'));
+  const amount = Number.isFinite(rawAmount) && rawAmount > 0 && rawAmount < 1000000 ? rawAmount.toFixed(2) : '';
+
+  document.getElementById('amount').textContent = amount
+    ? Number(amount).toLocaleString('en-US', { style: 'currency', currency: 'USD' })
+    : '';
+  document.getElementById('intro').textContent = amount ? "You've been asked to pay" : 'Send a payment';
+  const to = document.getElementById('to');
+  to.textContent = 'to ';
+  const strong = document.createElement('strong');
+  strong.textContent = name;
+  to.appendChild(strong);
+  document.title = `Pay ${name}`;
+
+  const isEmailOrPhone = v => {
+    const digits = v.replace(/\D/g, '');
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v) || digits.length === 10 || (digits.length === 11 && digits[0] === '1');
+  };
+
+  // Same rules the app uses, so a hand-edited link can't produce odd buttons
+  const METHODS = [
+    {
+      key: 'venmo', name: 'Venmo', color: '#008CFF', letter: 'V',
+      valid: v => /^[A-Za-z0-9_-]{2,30}$/.test(v),
+      show: v => '@' + v,
+      link: v => `https://venmo.com/${encodeURIComponent(v)}?txn=pay${amount ? '&amount=' + amount : ''}`
+    },
+    {
+      key: 'cashapp', name: 'Cash App', color: '#00D632', letter: '$',
+      valid: v => /^[A-Za-z][A-Za-z0-9_]{0,19}$/.test(v),
+      show: v => '$' + v,
+      link: v => `https://cash.app/$${encodeURIComponent(v)}${amount ? '/' + amount : ''}`
+    },
+    {
+      key: 'paypal', name: 'PayPal', color: '#003087', letter: 'P',
+      valid: v => /^[A-Za-z0-9]{1,20}$/.test(v),
+      show: v => 'paypal.me/' + v,
+      link: v => `https://paypal.me/${encodeURIComponent(v)}${amount ? '/' + amount : ''}`
+    },
+    {
+      key: 'zelle', name: 'Zelle', color: '#6D1ED4', letter: 'Z',
+      valid: isEmailOrPhone,
+      show: v => v,
+      note: 'Open your bank app or Zelle, choose Send, and paste this.'
+    },
+    {
+      key: 'applecash', name: 'Apple Cash', color: '#111111', letter: '',
+      valid: isEmailOrPhone,
+      show: v => v,
+      note: 'On iPhone, open Messages, start a chat with this contact, and tap Apple Cash.'
+    }
+  ];
+
+  const list = document.getElementById('methods');
+  let shown = 0;
+
+  METHODS.forEach(m => {
+    const value = get(m.key);
+    if (!value || !m.valid(value)) return;
+    shown++;
+
+    const row = document.createElement(m.link ? 'a' : 'div');
+    row.className = 'method';
+    if (m.link) row.href = m.link(value);
+
+    const logo = document.createElement('div');
+    logo.className = 'logo';
+    logo.style.background = m.color;
+    logo.textContent = m.letter || ''; // Apple logo character on Apple devices
+    if (!m.letter) logo.style.fontWeight = '400';
+
+    const details = document.createElement('div');
+    details.className = 'details';
+    const title = document.createElement('div');
+    title.className = 'name';
+    title.textContent = m.name;
+    const handle = document.createElement('div');
+    handle.className = 'handle';
+    handle.textContent = m.show(value);
+    details.append(title, handle);
+
+    row.append(logo, details);
+
+    if (m.link) {
+      const action = document.createElement('span');
+      action.className = 'action';
+      action.textContent = 'Pay ›';
+      row.append(action);
+      list.append(row);
+    } else {
+      const btn = document.createElement('button');
+      btn.className = 'copy';
+      btn.type = 'button';
+      btn.textContent = 'Copy';
+      btn.addEventListener('click', () => copyText(value, btn));
+      row.append(btn);
+      list.append(row);
+      const note = document.createElement('p');
+      note.className = 'note';
+      note.textContent = m.note;
+      list.append(note);
+    }
+  });
+
+  if (!shown) {
+    document.getElementById('methods-title').style.display = 'none';
+    const empty = document.createElement('p');
+    empty.className = 'empty';
+    empty.textContent = `${name} hasn't added any payment options to this link. Ask them how they'd like to be paid.`;
+    list.append(empty);
+  }
+
+  async function copyText(text, btn) {
+    let ok = false;
+    try {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    } catch {
+      // Older browsers: copy from a hidden text box
+      const box = document.createElement('textarea');
+      box.value = text;
+      box.setAttribute('readonly', '');
+      box.style.position = 'fixed';
+      box.style.opacity = '0';
+      document.body.append(box);
+      box.select();
+      try { ok = document.execCommand('copy'); } catch { ok = false; }
+      box.remove();
+    }
+    btn.textContent = ok ? 'Copied!' : 'Copy failed';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 2000);
+  }
+</script>
+</body>
+</html>
