@@ -8,7 +8,7 @@
 <!--
   "Request money by text" payment page for the Split app.
   Everything comes from the link, for example:
-    index.html?name=Shane%20Doe&amount=25.00&venmo=shane-doe&cashapp=shaned
+    index.html?name=Shane%20Doe&amount=25.00&note=Dinner&venmo=shane-doe&cashapp=shaned
              &paypal=shanedoe&zelle=shane@example.com&applecash=5551234567
   Only public payment handles are ever in the link. Methods that are missing
   or don't look valid are hidden.
@@ -97,6 +97,22 @@
   .note { color: var(--muted); font-size: 13px; margin: -4px 4px 14px; }
   .empty { text-align: center; color: var(--muted); padding: 24px 0; }
   footer { text-align: center; color: var(--muted); font-size: 12px; margin-top: 28px; }
+  .paid { margin-top: 24px; text-align: center; }
+  .paid button {
+    width: 100%;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px 16px;
+    font: inherit;
+    font-weight: 700;
+    font-size: 16px;
+    cursor: pointer;
+  }
+  .paid button:disabled { opacity: 0.6; cursor: default; }
+  .paid p { color: var(--muted); font-size: 13px; margin: 8px 4px 0; }
+  .paid.done button { border-color: #00b894; color: #00b894; }
 </style>
 </head>
 <body>
@@ -110,15 +126,27 @@
   <h2 id="methods-title">Pay with</h2>
   <div id="methods"></div>
 
+  <!-- Shown when the link came from the app and the "I've paid" service is set up -->
+  <section class="paid" id="paid" hidden>
+    <button type="button" id="paid-btn">I've paid</button>
+    <p id="paid-note">Tap this after you send the money, so they know.</p>
+  </section>
+
   <footer>Payments go directly through each app. This page never sees your payment details.</footer>
 </main>
 
 <script>
+  // Address of the "I've paid" service (server/README.md). Empty hides the button.
+  const PAID_API_URL = 'https://split-paid.paysplit.workers.dev';
+
   const params = new URLSearchParams(location.search);
   const get = key => (params.get(key) || '').trim();
 
   // Name of the person being paid (plain text only, kept short)
   const name = get('name').slice(0, 60) || 'your friend';
+
+  // What it's for, e.g. "Dinner" (plain text only, kept short)
+  const note = get('note').slice(0, 60);
 
   // Amount: must be a positive number, shown as $25.00
   const rawAmount = Number(get('amount'));
@@ -133,6 +161,7 @@
   const strong = document.createElement('strong');
   strong.textContent = name;
   to.appendChild(strong);
+  if (note) to.append(` for ${note}`);
   document.title = `Pay ${name}`;
 
   const isEmailOrPhone = v => {
@@ -146,7 +175,7 @@
       key: 'venmo', name: 'Venmo', color: '#008CFF', letter: 'V',
       valid: v => /^[A-Za-z0-9_-]{2,30}$/.test(v),
       show: v => '@' + v,
-      link: v => `https://venmo.com/${encodeURIComponent(v)}?txn=pay${amount ? '&amount=' + amount : ''}`
+      link: v => `https://venmo.com/${encodeURIComponent(v)}?txn=pay${amount ? '&amount=' + amount : ''}${note ? '&note=' + encodeURIComponent(note) : ''}`
     },
     {
       key: 'cashapp', name: 'Cash App', color: '#00D632', letter: '$',
@@ -231,6 +260,39 @@
     empty.className = 'empty';
     empty.textContent = `${name} hasn't added any payment options to this link. Ask them how they'd like to be paid.`;
     list.append(empty);
+  }
+
+  // "I've paid": tells the person who texted the link, through the service
+  const rid = get('rid');
+  const paidBox = document.getElementById('paid');
+  const paidBtn = document.getElementById('paid-btn');
+  const paidNote = document.getElementById('paid-note');
+  if (PAID_API_URL && /^[A-Za-z0-9_-]{16,64}$/.test(rid) && shown) {
+    paidBox.hidden = false;
+    paidBtn.addEventListener('click', async () => {
+      paidBtn.disabled = true;
+      paidBtn.textContent = 'Sending...';
+      try {
+        const res = await fetch(PAID_API_URL.replace(/\/+$/, '') + '/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rid })
+        });
+        if (res.status === 404) {
+          paidBtn.textContent = "I've paid";
+          paidNote.textContent = `This link has expired. Let ${name} know you've paid.`;
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+        paidBox.classList.add('done');
+        paidBtn.textContent = '✓ Sent';
+        paidNote.textContent = `Thanks! We let ${name} know you've paid.`;
+      } catch {
+        paidBtn.disabled = false;
+        paidBtn.textContent = "I've paid";
+        paidNote.textContent = "Couldn't send that. Check your connection and try again.";
+      }
+    });
   }
 
   async function copyText(text, btn) {
